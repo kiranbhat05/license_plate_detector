@@ -1,0 +1,17 @@
+# Ignore build directories and files
+build/
+devel/
+install/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore ROS logs
+log/
+ros_logs/
+
+# Ignore other temporary files
+*.swp
+*.swo

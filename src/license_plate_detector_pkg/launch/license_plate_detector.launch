@@ -1,0 +1,7 @@
+<launch>
+  <!-- Launch the image publisher node -->
+  <node name="image_publisher" pkg="license_plate_detector_pkg" type="image_publisher.py" output="screen"/>
+
+  <!-- Launch the license plate detector node -->
+  <node name="license_plate_detector" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen"/>
+</launch>
