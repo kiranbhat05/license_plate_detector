@@ -13,7 +13,7 @@ catkin_package()
 include_directories(${catkin_INCLUDE_DIRS})
 
 catkin_install_python(PROGRAMS
-  src/image_publisher.py
+  src/license_plate_detector_preprocessor.py
   src/license_plate_detector.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

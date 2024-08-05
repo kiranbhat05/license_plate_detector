@@ -1,7 +1,26 @@
 <launch>
-  <!-- Launch the image publisher node -->
-  <node name="image_publisher" pkg="license_plate_detector_pkg" type="image_publisher.py" output="screen"/>
+    <!-- Start the image publisher node -->
+    <node name="license_plate_detector_preprocessor" pkg="license_plate_detector_pkg" type="license_plate_detector_preprocessor.py" output="screen">
+        <param name="left_width_percent" value="50" />
 
-  <!-- Launch the license plate detector node -->
-  <node name="license_plate_detector" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen"/>
+        <param name="left_image_left_side_crop" value="25" />
+        <param name="left_image_right_side_crop" value="35" />
+        <param name="left_image_top_crop" value="33" />
+        <param name="left_image_bottom_crop" value="33" />
+
+        <param name="right_image_left_side_crop" value="32" />
+        <param name="right_image_right_side_crop" value="32" />
+        <param name="right_image_top_crop" value="33" />
+        <param name="right_image_bottom_crop" value="33" />
+    </node>
+
+    <!-- Start the first subscriber node to process the left side -->
+    <node name="license_plate_detector_left" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen">
+        <param name="topic_name" value="processed_left_frame"/>
+    </node>
+
+    <!-- Start the second subscriber node to process the right side -->
+    <node name="license_plate_detector_right" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen">
+        <param name="topic_name" value="processed_right_frame"/>
+    </node>
 </launch>
