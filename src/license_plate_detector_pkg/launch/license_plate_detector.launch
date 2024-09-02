@@ -25,4 +25,7 @@
         <param name="topic_name" value="processed_right_frame"/>
         <param name="use_yolo" value="false"/>  <!-- Parameter to enable or bypass YOLO -->
     </node>
+
+    <!-- Map Plotter Node -->
+    <node name="map_plotter" pkg="license_plate_detector_pkg" type="map_plotter.py" output="screen"/>
 </launch>

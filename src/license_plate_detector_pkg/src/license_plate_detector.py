@@ -3,6 +3,7 @@
 import rospy
 from sensor_msgs.msg import Image
 from sensor_msgs.msg import NavSatFix
+from std_msgs.msg import String
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import sys
@@ -18,6 +19,9 @@ if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
 import torch  # Import torch for YOLO model
+import math
+import torch
+
 from openalpr import Alpr
 import re
 
@@ -78,7 +82,12 @@ class LicensePlateDetector:
         self.topic_name = topic_name
         self.prev_most_frequent_plate = 'Do123456'
         self.gnss_data = None
+        self.adjusted_gnss_data = None
+        self.prev_gnss_data = None  # Store previous GNSS data
         self.use_yolo = use_yolo  # Store the parameter value
+
+        # Initialize a publisher for license plate and GNSS data
+        self.license_plate_pub = rospy.Publisher('license_plate_data', String, queue_size=10)
 
         if self.use_yolo:
             self.yolo_detector = YoloLicensePlateDetector()  # Initialize YOLO detector
@@ -88,11 +97,51 @@ class LicensePlateDetector:
 
     def gps_callback(self, data):
         """Callback function to update GNSS data."""
-        self.gnss_data = {
+        current_gnss_data = {
             "latitude": data.latitude,
             "longitude": data.longitude,
             "altitude": data.altitude
         }
+
+        if self.prev_gnss_data is None:
+            # First data point; no previous data to compare with
+            self.prev_gnss_data = current_gnss_data
+            self.adjusted_gnss_data = current_gnss_data
+            return
+
+        # Compute the differences in latitude and longitude
+        delta_latitude = current_gnss_data['latitude'] - self.prev_gnss_data['latitude']
+        delta_longitude = current_gnss_data['longitude'] - self.prev_gnss_data['longitude']
+
+        # Determine the direction of movement
+        if abs(delta_latitude) > abs(delta_longitude):
+            # Predominant movement is north-south
+            self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 0, 2 if delta_latitude > 0 else -2)
+        elif abs(delta_longitude) > abs(delta_latitude):
+            # Predominant movement is east-west
+            self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 2 if delta_longitude > 0 else -2, 0)
+        else:
+            # Significant movement in both directions
+            self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 
+                                                             2 if delta_longitude > 0 else -2, 
+                                                             2 if delta_latitude > 0 else -2)
+
+        # Update the previous GNSS data for the next comparison
+        self.prev_gnss_data = current_gnss_data
+
+    def adjust_coordinates(self, gnss_data, lateral_shift_meters, longitudinal_shift_meters):
+        """Adjust latitude and longitude by a given number of meters."""
+        # Convert meters to degrees
+        delta_latitude = longitudinal_shift_meters / 111320  # Adjust latitude based on movement
+        delta_longitude = lateral_shift_meters / (111320 * math.cos(math.radians(gnss_data['latitude'])))  # Adjust longitude
+
+        adjusted_gnss_data = {
+            "latitude": gnss_data['latitude'] + delta_latitude,
+            "longitude": gnss_data['longitude'] + delta_longitude,
+            "altitude": gnss_data['altitude']
+        }
+
+        return adjusted_gnss_data
 
     def image_callback(self, msg):
         try:
@@ -165,32 +214,28 @@ class LicensePlateDetector:
             most_frequent_plate, count = plate_counts.most_common(1)[0]
             if count > 3:
                 if self.prev_most_frequent_plate != most_frequent_plate:
-                    print(f"Detected license plate: {most_frequent_plate} from topic: {self.topic_name}")
                     self.check_plate_deep_history(most_frequent_plate)
-                    self.prev_most_frequent_plate = most_frequent_plate
-                self.plate_history.clear()
 
     def check_plate_deep_history(self, shallow_history_plate):
         """Process the detected plate, storing it in the ring buffer if not already present."""
-        if self.gnss_data is None:
+        if self.adjusted_gnss_data is None:
             print("GNSS data is not available. Skipping storage.")
             return
 
         # Only add metadata if it isn't already in the ring buffer
         if shallow_history_plate not in self.plate_deep_history_rb:
-            
             self.plate_deep_history_rb.append(shallow_history_plate)
-            metadata = Metadata(shallow_history_plate, self.gnss_data)
+            metadata = Metadata(shallow_history_plate, self.adjusted_gnss_data)
             print(f"Storing metadata in ring buffer: {metadata}")
 
-            # Enhanced Debugging Output
-            # print(f"Current number of plates in plate_deep_history_rb: {len(self.plate_deep_history_rb)}")
-            # print("Current plate_deep_history_rb:")
-            # for item in self.plate_deep_history_rb:
-            #     print(item)
-        else:
-            print(f"Plate {shallow_history_plate} is already in the ring buffer.")
+            # Publish the license plate data and GNSS coordinates
+            self.publish_license_plate_data(metadata)
 
+    def publish_license_plate_data(self, metadata):
+        """Publish license plate data and GNSS coordinates."""
+        data_string = f"{metadata.number_plate},{metadata.gnss_data['latitude']},{metadata.gnss_data['longitude']},{metadata.gnss_data['altitude']}"
+        self.license_plate_pub.publish(data_string)
+        print(f"{self.topic_name} Published license plate data: {data_string}")
 
 if __name__ == '__main__':
     rospy.init_node('license_plate_detector', anonymous=True)
