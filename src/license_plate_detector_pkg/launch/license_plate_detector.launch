@@ -17,10 +17,12 @@
     <!-- Start the first subscriber node to process the left side -->
     <node name="license_plate_detector_left" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen">
         <param name="topic_name" value="processed_left_frame"/>
+        <param name="use_yolo" value="false"/>  <!-- Parameter to enable or bypass YOLO -->
     </node>
 
     <!-- Start the second subscriber node to process the right side -->
     <node name="license_plate_detector_right" pkg="license_plate_detector_pkg" type="license_plate_detector.py" output="screen">
         <param name="topic_name" value="processed_right_frame"/>
+        <param name="use_yolo" value="false"/>  <!-- Parameter to enable or bypass YOLO -->
     </node>
 </launch>

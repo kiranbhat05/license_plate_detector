@@ -2,14 +2,14 @@
 
 import rospy
 from sensor_msgs.msg import Image
-from sensor_msgs.msg import NavSatFix  # Import for GPS data
+from sensor_msgs.msg import NavSatFix
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import sys
 import os
 import importlib
 from collections import Counter, deque
-from datetime import datetime  # Import for date and time
+from datetime import datetime
 
 # Import the openalpr module
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -17,8 +17,8 @@ lib_path = os.path.join(script_dir, '../lib')
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
+import torch  # Import torch for YOLO model
 from openalpr import Alpr
-
 import re
 
 class Metadata:
@@ -31,9 +31,39 @@ class Metadata:
     def __str__(self):
         return f"DateTime: {self.date_time}, Plate: {self.number_plate}, GNSS: {self.gnss_data}"
 
+class YoloLicensePlateDetector:
+    def __init__(self, confidence_threshold=0.7):
+        """Initialize the YOLO model for license plate detection."""
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        model_path = os.path.join(script_dir, '../data/alpr_weights.pt')  # Relative path to the model weights
+        
+        try:
+            self.model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
+            print("YOLO model loaded successfully.")
+        except Exception as e:
+            print(f"Error loading YOLOv5 model: {e}")
+            exit()
+        self.confidence_threshold = confidence_threshold
+
+    def detect_license_plate(self, frame):
+        """Detect license plate regions in the image."""
+        results = self.model(frame)
+        plates = []
+        
+        # Check for detections and filter by confidence threshold
+        if results.xyxy[0].shape[0] > 0:
+            for detection in results.xyxy[0]:
+                conf = detection[4].item()
+                if conf >= self.confidence_threshold:
+                    x1, y1, x2, y2 = map(int, detection[:4].tolist())
+                    plates.append((x1, y1, x2, y2, conf))
+        
+        return plates
+
 class LicensePlateDetector:
-    def __init__(self, topic_name, gps_topic):
+    def __init__(self, topic_name, gps_topic, use_yolo):
         # Initialize ALPR
+        script_dir = os.path.dirname(os.path.realpath(__file__))
         runtime_data_path = os.path.join(script_dir, "../lib/runtime_data")
         self.alpr = Alpr("eu", "/etc/openalpr/alprd.conf", runtime_data_path)
         if not self.alpr.is_loaded():
@@ -44,13 +74,17 @@ class LicensePlateDetector:
         self.alpr.set_default_region("md")
         self.bridge = CvBridge()
         self.plate_history = []
-        self.plate_deep_history_rb = deque(maxlen=5)  # Ring buffer of size 5
+        self.plate_deep_history_rb = deque(maxlen=5)
         self.topic_name = topic_name
         self.prev_most_frequent_plate = 'Do123456'
-        self.gnss_data = None  # To store GNSS data
+        self.gnss_data = None
+        self.use_yolo = use_yolo  # Store the parameter value
+
+        if self.use_yolo:
+            self.yolo_detector = YoloLicensePlateDetector()  # Initialize YOLO detector
 
         rospy.Subscriber(self.topic_name, Image, self.image_callback)
-        rospy.Subscriber(gps_topic, NavSatFix, self.gps_callback)  # Subscriber for GPS data
+        rospy.Subscriber(gps_topic, NavSatFix, self.gps_callback)
 
     def gps_callback(self, data):
         """Callback function to update GNSS data."""
@@ -71,7 +105,22 @@ class LicensePlateDetector:
         self.process_frame(frame)
 
     def process_frame(self, frame):
-        self.process_plate(frame, 75) # to test decreased the confidence level
+        if self.use_yolo:
+            license_plate_regions = self.yolo_detector.detect_license_plate(frame)
+            
+            if not license_plate_regions:
+                return
+
+            for (x1, y1, x2, y2, conf) in license_plate_regions:
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                confidence_text = f'{conf * 100:.2f}%'
+                cv2.putText(frame, confidence_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+                cropped_number_plate = frame[y1:y2, x1:x2]
+                self.process_plate(cropped_number_plate, 75)
+        else:
+            # Directly pass the entire frame to ALPR
+            self.process_plate(frame, 75)
 
         cv2.imshow(f"{self.topic_name}", frame)
         cv2.waitKey(1)
@@ -106,7 +155,7 @@ class LicensePlateDetector:
             return True
         return False
 
-    def check_plate_shallow_history(self, plate, history_size=6):
+    def check_plate_shallow_history(self, plate, history_size=8):
         self.plate_history.append(plate)
         if len(self.plate_history) > history_size:
             self.plate_history.pop(0)
@@ -114,7 +163,7 @@ class LicensePlateDetector:
         if len(self.plate_history) == history_size:
             plate_counts = Counter(self.plate_history)
             most_frequent_plate, count = plate_counts.most_common(1)[0]
-            if count > 2:
+            if count > 3:
                 if self.prev_most_frequent_plate != most_frequent_plate:
                     print(f"Detected license plate: {most_frequent_plate} from topic: {self.topic_name}")
                     self.check_plate_deep_history(most_frequent_plate)
@@ -123,23 +172,35 @@ class LicensePlateDetector:
 
     def check_plate_deep_history(self, shallow_history_plate):
         """Process the detected plate, storing it in the ring buffer if not already present."""
+        if self.gnss_data is None:
+            print("GNSS data is not available. Skipping storage.")
+            return
+
+        # Only add metadata if it isn't already in the ring buffer
         if shallow_history_plate not in self.plate_deep_history_rb:
-            if self.gnss_data is None:
-                print("GNSS data is not available. Skipping storage.")
-                return
+            
+            self.plate_deep_history_rb.append(shallow_history_plate)
             metadata = Metadata(shallow_history_plate, self.gnss_data)
-            self.plate_deep_history_rb.append(metadata)
             print(f"Storing metadata in ring buffer: {metadata}")
+
+            # Enhanced Debugging Output
+            # print(f"Current number of plates in plate_deep_history_rb: {len(self.plate_deep_history_rb)}")
+            # print("Current plate_deep_history_rb:")
+            # for item in self.plate_deep_history_rb:
+            #     print(item)
         else:
             print(f"Plate {shallow_history_plate} is already in the ring buffer.")
+
 
 if __name__ == '__main__':
     rospy.init_node('license_plate_detector', anonymous=True)
 
-    # Arguments to specify which topics to listen to
+    # Get parameters from launch file
     topic_name = rospy.get_param('~topic_name', 'video_frames')
-    gps_topic = rospy.get_param('~gps_topic', '/gps/fix')  # Added parameter for GPS topic
-    detector = LicensePlateDetector(topic_name, gps_topic)
+    gps_topic = rospy.get_param('~gps_topic', '/gps/fix')
+    use_yolo = rospy.get_param('~use_yolo', True)  # Parameter to enable or bypass YOLO
+
+    detector = LicensePlateDetector(topic_name, gps_topic, use_yolo)
     
     try:
         rospy.spin()
