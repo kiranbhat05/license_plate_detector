@@ -4,6 +4,38 @@ import rospy
 from std_msgs.msg import String
 import plotly.graph_objects as go
 import os
+import json
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.backends import default_backend
+
+# Class to decrypt the license plate data
+class DecryptionManager:
+    def __init__(self, private_key_file):
+        """Initialize the decryption manager with RSA private key."""
+        self.private_key = self.load_private_key(private_key_file)
+
+    def load_private_key(self, filename):
+        """Load RSA private key from a file."""
+        with open(filename, "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend()
+            )
+        return private_key
+
+    def decrypt_data(self, encrypted_data):
+        """Decrypt the encrypted data using RSA private key."""
+        decrypted_data = self.private_key.decrypt(
+            encrypted_data,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return decrypted_data.decode()
 
 class MapPlotter:
     def __init__(self):
@@ -28,6 +60,10 @@ class MapPlotter:
             showlegend=False
         )
 
+        # Load the private key for decryption
+        private_key_file = os.path.join(os.path.dirname(__file__), "private_key.pem")
+        self.decryption_manager = DecryptionManager(private_key_file)
+
         # Subscribe to the license_plate_data topic
         rospy.Subscriber('license_plate_data', String, self.license_plate_callback)
 
@@ -37,12 +73,24 @@ class MapPlotter:
     def license_plate_callback(self, msg):
         """Callback function to handle incoming license plate data."""
         data = msg.data.split(',')
-        number_plate = data[0]
-        latitude = float(data[1])
-        longitude = float(data[2])
-        altitude = float(data[3])
 
-        # Store the data in a dictionary with the number plate as the key
+        # Decrypt the number plate data (third element, index 2)
+        encrypted_number_plate_hex = data[2]  # The encrypted number plate is at index 2
+        encrypted_number_plate = bytes.fromhex(encrypted_number_plate_hex)  # Convert hex to bytes
+
+        # Decrypt the license plate using the DecryptionManager
+        number_plate = self.decryption_manager.decrypt_data(encrypted_number_plate)
+
+        # Process the remaining GNSS and other data
+        automobile_id = int(data[0])  # Use square brackets to access list elements
+        print(f"Automobile ID: {automobile_id}")
+        date_time = data[1]  # No need to cast this to str since it's already a string
+        print(f"Date/Time: {date_time}")
+        latitude = float(data[3])  # Convert latitude to float
+        longitude = float(data[4])  # Convert longitude to float
+        altitude = float(data[5])  # Convert altitude to float
+
+        # Store the data in a dictionary with the decrypted number plate as the key
         self.plate_data[number_plate] = {
             "latitude": latitude,
             "longitude": longitude,

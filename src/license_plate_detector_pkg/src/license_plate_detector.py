@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import rospy
 from sensor_msgs.msg import Image, NavSatFix, Imu
 from std_msgs.msg import String
@@ -23,16 +21,49 @@ import torch
 from openalpr import Alpr
 import re
 
+import json
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
+
+class EncryptionManager:
+    def __init__(self, public_key_file):
+        """Initialize the encryption manager with RSA public key."""
+        self.public_key = self.load_public_key(public_key_file)
+
+    def load_public_key(self, filename):
+        """Load RSA public key from a file."""
+        with open(filename, "rb") as key_file:
+            public_key = serialization.load_pem_public_key(
+                key_file.read(),
+                backend=default_backend()
+            )
+        return public_key
+
+    def encrypt_data(self, data):
+        """Encrypt serialized metadata using the RSA public key."""
+        encrypted_data = self.public_key.encrypt(
+            data.encode(),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return encrypted_data
+
+
 class Metadata:
     """Class to hold metadata information like time, date, number plate, GNSS data, and automobile ID."""
     def __init__(self, number_plate, gnss_data, automobile_id):
-        self.date_time = datetime.now()
+        self.automobile_id = automobile_id  # automobile ID
+        self.date_time = datetime.now().isoformat()
         self.number_plate = number_plate
-        self.gnss_data = gnss_data  # Use real GNSS data
-        self.automobile_id = automobile_id  # Add automobile ID
+        self.gnss_data = gnss_data  # GNSS data
+        
 
     def __str__(self):
-        return f"DateTime: {self.date_time}, Plate: {self.number_plate}, GNSS: {self.gnss_data}, AutomobileID: {self.automobile_id}"
+        return f"AutomobileID: {self.automobile_id}, DateTime: {self.date_time}, Plate: {self.number_plate}, GNSS: {self.gnss_data}"
 
 class YoloLicensePlateDetector:
     def __init__(self, confidence_threshold=0.7):
@@ -83,6 +114,10 @@ class LicensePlateDetector:
         self.use_yolo = use_yolo  # Store the parameter value
 
         self.automobile_id = random.randint(1000, 9999)
+
+        # Initialize the encryption manager
+        public_key_file = os.path.join(script_dir, "public_key.pem")
+        self.encryption_manager = EncryptionManager(public_key_file)
 
         self.license_plate_pub = rospy.Publisher('license_plate_data', String, queue_size=10)
 
@@ -200,9 +235,6 @@ class LicensePlateDetector:
 
 
 
-
-
-
     def adjust_coordinates(self, gnss_data, lateral_shift_meters, longitudinal_shift_meters):
         """Adjust latitude and longitude by a given number of meters."""
         
@@ -303,14 +335,18 @@ class LicensePlateDetector:
 
         if shallow_history_plate not in self.plate_deep_history_rb:
             self.plate_deep_history_rb.append(shallow_history_plate)
-            metadata = Metadata(shallow_history_plate, self.adjusted_gnss_data, self.automobile_id)
+            # Encrypt the numberplate using the EncryptionManager
+            encrypted_numberplate = self.encryption_manager.encrypt_data(shallow_history_plate)
+
+            metadata = Metadata(encrypted_numberplate.hex(), self.adjusted_gnss_data, self.automobile_id)
             print(f"Storing metadata in ring buffer: {metadata}")
             self.publish_license_plate_data(metadata)
 
     def publish_license_plate_data(self, metadata):
-        data_string = f"{metadata.number_plate},{metadata.gnss_data['latitude']},{metadata.gnss_data['longitude']},{metadata.gnss_data['altitude']},{metadata.automobile_id}"
+        data_string = f"{metadata.automobile_id},{metadata.date_time},{metadata.number_plate},{metadata.gnss_data['latitude']},{metadata.gnss_data['longitude']},{metadata.gnss_data['altitude']}"
         self.license_plate_pub.publish(data_string)
-        print(f"{self.topic_name} Published license plate data: {data_string}")
+        #print(f"{self.topic_name} Published license plate data: {data_string}")
+
 
 if __name__ == '__main__':
     rospy.init_node('license_plate_detector', anonymous=True)
