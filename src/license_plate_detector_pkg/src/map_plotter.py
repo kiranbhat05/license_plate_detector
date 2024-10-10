@@ -61,7 +61,9 @@ class MapPlotter:
         )
 
         # Load the private key for decryption
-        private_key_file = os.path.join(os.path.dirname(__file__), "private_key.pem")
+        # Get the path to the script directory
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        private_key_file = os.path.join(script_dir, "../certs", "private_key.pem")
         self.decryption_manager = DecryptionManager(private_key_file)
 
         # Subscribe to the license_plate_data topic

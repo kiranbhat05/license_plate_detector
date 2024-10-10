@@ -28,4 +28,8 @@
 
     <!-- Map Plotter Node -->
     <node name="map_plotter" pkg="license_plate_detector_pkg" type="map_plotter.py" output="screen"/>
+
+    <!-- Json publisher -->
+    <node name="license_plate_json_publisher" pkg="license_plate_detector_pkg" type="license_plate_json_publisher.py" output="screen" />
+
 </launch>

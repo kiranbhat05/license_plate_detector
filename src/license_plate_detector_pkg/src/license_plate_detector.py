@@ -69,9 +69,13 @@ class YoloLicensePlateDetector:
     def __init__(self, confidence_threshold=0.7):
         script_dir = os.path.dirname(os.path.realpath(__file__))
         model_path = os.path.join(script_dir, '../data/alpr_weights.pt')  # Relative path to the model weights
+        # Determine the device to be used
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {device}")
         
         try:
             self.model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
+            self.model.to(device)
             print("YOLO model loaded successfully.")
         except Exception as e:
             print(f"Error loading YOLOv5 model: {e}")
@@ -116,7 +120,7 @@ class LicensePlateDetector:
         self.automobile_id = random.randint(1000, 9999)
 
         # Initialize the encryption manager
-        public_key_file = os.path.join(script_dir, "public_key.pem")
+        public_key_file = os.path.join(script_dir,"../certs", "public_key.pem")
         self.encryption_manager = EncryptionManager(public_key_file)
 
         self.license_plate_pub = rospy.Publisher('license_plate_data', String, queue_size=10)
@@ -324,9 +328,10 @@ class LicensePlateDetector:
         if len(self.plate_history) == history_size:
             plate_counts = Counter(self.plate_history)
             most_frequent_plate, count = plate_counts.most_common(1)[0]
-            if count > 4:
+            if count > 3:
                 if self.prev_most_frequent_plate != most_frequent_plate:
                     self.check_plate_deep_history(most_frequent_plate)
+                    self.plate_history.clear()
 
     def check_plate_deep_history(self, shallow_history_plate):
         if self.adjusted_gnss_data is None:
