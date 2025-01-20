@@ -20,15 +20,21 @@ import torch
 
 from openalpr import Alpr
 import re
-
-import json
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
 
 class EncryptionManager:
     def __init__(self, public_key_file):
-        """Initialize the encryption manager with RSA public key."""
+        """
+        Initialize the EncryptionManager with an RSA public key.
+
+        Parameters:
+        public_key_file (str): The file path to the RSA public key in PEM format.
+
+        Returns:
+        None
+        """
         self.public_key = self.load_public_key(public_key_file)
 
     def load_public_key(self, filename):
@@ -41,7 +47,15 @@ class EncryptionManager:
         return public_key
 
     def encrypt_data(self, data):
-        """Encrypt serialized metadata using the RSA public key."""
+        """
+        Encrypt serialized metadata using the RSA public key.
+
+        Parameters:
+        data (str): The data to be encrypted, provided as a string.
+
+        Returns:
+        bytes: The encrypted data as a byte array.
+        """
         encrypted_data = self.public_key.encrypt(
             data.encode(),
             padding.OAEP(
@@ -60,19 +74,36 @@ class Metadata:
         self.date_time = datetime.now().isoformat()
         self.number_plate = number_plate
         self.gnss_data = gnss_data  # GNSS data
-        
+
 
     def __str__(self):
+        """
+        Generate a string representation of the Metadata object.
+
+        Returns:
+        str: A formatted string containing the automobile ID, date and time, 
+             number plate, and GNSS data.
+        """
         return f"AutomobileID: {self.automobile_id}, DateTime: {self.date_time}, Plate: {self.number_plate}, GNSS: {self.gnss_data}"
 
 class YoloLicensePlateDetector:
     def __init__(self, confidence_threshold=0.7):
+        """
+        Initialize the YoloLicensePlateDetector with a specified confidence threshold.
+
+        Parameters:
+        confidence_threshold (float): The minimum confidence level required for a detection to be considered valid. 
+                                      Defaults to 0.7.
+
+        Returns:
+        None
+        """
         script_dir = os.path.dirname(os.path.realpath(__file__))
         model_path = os.path.join(script_dir, '../data/alpr_weights.pt')  # Relative path to the model weights
         # Determine the device to be used
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {device}")
-        
+
         try:
             self.model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
             self.model.to(device)
@@ -83,20 +114,42 @@ class YoloLicensePlateDetector:
         self.confidence_threshold = confidence_threshold
 
     def detect_license_plate(self, frame):
+        """
+        Detects license plates in a given image frame using a pre-trained YOLO model.
+
+        Parameters:
+        frame (numpy.ndarray): The image frame in which to detect license plates.
+
+        Returns:
+        list: A list of tuples, each containing the coordinates (x1, y1, x2, y2) of the detected license plate
+              and the confidence score of the detection. Returns an empty list if no plates are detected.
+        """
         results = self.model(frame)
         plates = []
-        
+
         if results.xyxy[0].shape[0] > 0:
             for detection in results.xyxy[0]:
                 conf = detection[4].item()
                 if conf >= self.confidence_threshold:
                     x1, y1, x2, y2 = map(int, detection[:4].tolist())
                     plates.append((x1, y1, x2, y2, conf))
-        
+
         return plates
 
 class LicensePlateDetector:
     def __init__(self, topic_name, gps_topic, orientation_topic, use_yolo):
+        """
+        Initialize the LicensePlateDetector class with specified parameters.
+
+        Parameters:
+        topic_name (str): The name of the ROS topic to subscribe to for image frames.
+        gps_topic (str): The name of the ROS topic to subscribe to for GPS data.
+        orientation_topic (str): The name of the ROS topic to subscribe to for orientation data.
+        use_yolo (bool): A flag indicating whether to use YOLO for license plate detection.
+
+        Returns:
+        None
+        """
         script_dir = os.path.dirname(os.path.realpath(__file__))
         runtime_data_path = os.path.join(script_dir, "../lib/runtime_data")
         self.alpr = Alpr("eu", "/etc/openalpr/alprd.conf", runtime_data_path)
@@ -133,7 +186,16 @@ class LicensePlateDetector:
         rospy.Subscriber(orientation_topic, Imu, self.yaw_callback)
 
     def yaw_callback(self, data):
-        """Callback function for the '/yaw' topic to get orientation and convert to direction."""
+        """
+        Callback function for processing orientation data from the '/yaw' topic.
+        Converts quaternion orientation data to a human-readable direction.
+
+        Parameters:
+        data (Imu): The IMU message containing orientation data in quaternion format.
+
+        Returns:
+        None: This function updates the instance's orientation attribute based on the yaw angle.
+        """
         quaternion = (
             data.orientation.x,
             data.orientation.y,
@@ -166,11 +228,16 @@ class LicensePlateDetector:
         elif 292.5 <= yaw_degrees < 337.5:
             self.orientation = "northwest"
 
-        # Print yaw angle and interpreted orientation
-        # print(f"Yaw angle: {yaw_degrees:.2f} degrees, Orientation: {self.orientation}")
-
     def gps_callback(self, data):
-        """Callback function to update GNSS data and adjust based on direction."""
+        """
+        Callback function to update GNSS data and adjust it based on the vehicle's orientation and the topic name.
+
+        Parameters:
+        data (NavSatFix): The GPS data received from the subscribed ROS topic, containing latitude, longitude, and altitude.
+
+        Returns:
+        None: This function updates the instance's adjusted GNSS data based on the current orientation and topic name.
+        """
         current_gnss_data = {
             "latitude": data.latitude,
             "longitude": data.longitude,
@@ -189,43 +256,43 @@ class LicensePlateDetector:
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 2, 0)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -2, 0)
-        
+
         elif self.orientation == "west":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -2, 0)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 2, 0)
-        
+
         elif self.orientation == "north":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 0, -2)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 0, 2)
-        
+
         elif self.orientation == "south":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 0, 2)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 0, -2)
-        
+
         elif self.orientation == "northeast":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 1.5, 1.5)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -1.5, -1.5)
-        
+
         elif self.orientation == "northwest":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -1.5, 1.5)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 1.5, -1.5)
-        
+
         elif self.orientation == "southeast":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, 1.5, -1.5)
             elif self.topic_name == "processed_right_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -1.5, 1.5)
-        
+
         elif self.orientation == "southwest":
             if self.topic_name == "processed_left_frame":
                 self.adjusted_gnss_data = self.adjust_coordinates(current_gnss_data, -1.5, -1.5)
@@ -240,8 +307,16 @@ class LicensePlateDetector:
 
 
     def adjust_coordinates(self, gnss_data, lateral_shift_meters, longitudinal_shift_meters):
-        """Adjust latitude and longitude by a given number of meters."""
-        
+        """Adjust latitude and longitude by a given number of meters.
+
+        Args:
+        gnss_data (dict): A dictionary containing the current latitude, longitude, and altitude.
+        lateral_shift_meters (float): The lateral shift in meters.
+        longitudinal_shift_meters (float): The longitudinal shift in meters.
+
+        Returns:
+        dict: A dictionary containing the adjusted latitude, longitude, and the original altitude.
+        """
         # Earth's radius in meters (mean radius)
         earth_radius = 6378137  # meters
 
