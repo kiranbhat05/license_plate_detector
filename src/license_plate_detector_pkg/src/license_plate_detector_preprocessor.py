@@ -7,24 +7,32 @@ import cv2
 import numpy as np
 
 class ImageProcessor:
+    """
+    A class to process images for license plate detection.
+    Initializes ROS node, publishers, and subscribers for image processing.
+    """
+
     def __init__(self):
         # Initialize ROS node with the new name
         rospy.init_node('license_plate_detector_preprocessor', anonymous=True)
-        
-        # Initialize publishers for left and right images with new topic names
+
+        # Initialize publishers for processed images
         self.pub_left = rospy.Publisher('processed_left_frame', Image, queue_size=1)
         self.pub_right = rospy.Publisher('processed_right_frame', Image, queue_size=1)
-        
+
         # Initialize CvBridge
         self.bridge = CvBridge()
-        
+
         # Subscribe to the /image_raw topic
-        self.image_sub = rospy.Subscriber('/image_raw', Image, self.image_callback, queue_size=1, buff_size=2**24)
+        self.image_sub = rospy.Subscriber(
+            '/image_raw', Image, self.image_callback, 
+            queue_size=1, buff_size=2**24
+        )
 
         # Percentage to divide the image into left and right parts
         self.left_width_percent = rospy.get_param('~left_width_percent', 50) / 100.0  # Default is 50%
-        
-        # Cropping percentages for each side of the left and right images
+
+        # Cropping percentages for left and right images
         self.left_image_crops = {
             'left': rospy.get_param('~left_image_left_side_crop', 10) / 100.0,
             'right': rospy.get_param('~left_image_right_side_crop', 10) / 100.0,

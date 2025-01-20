@@ -337,6 +337,22 @@ class LicensePlateDetector:
 
 
     def image_callback(self, msg):
+        """
+        Callback function for processing incoming image messages.
+
+        This function converts the ROS image message to an OpenCV image format
+        and then processes the resulting frame.
+
+        Parameters:
+        msg (sensor_msgs.msg.Image): The incoming ROS image message.
+
+        Returns:
+        None: This function doesn't return anything, but it calls the process_frame
+              method with the converted image frame.
+
+        Raises:
+        CvBridgeError: If there's an error in converting the ROS image to OpenCV format.
+        """
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except CvBridgeError as e:
@@ -346,6 +362,20 @@ class LicensePlateDetector:
         self.process_frame(frame)
 
     def process_frame(self, frame):
+        """
+        Process a single frame to detect and recognize license plates.
+
+        This function uses either YOLO or a default method to detect license plates in the given frame.
+        If YOLO is used, it draws bounding boxes around detected plates and processes each detected region.
+        If YOLO is not used, it processes the entire frame as a potential license plate.
+
+        Parameters:
+        frame (numpy.ndarray): The input image frame to be processed.
+
+        Returns:
+        None: This function doesn't return anything, but it updates the frame with detected plates
+              and displays the result.
+        """
         if self.use_yolo:
             license_plate_regions = self.yolo_detector.detect_license_plate(frame)
 
@@ -366,6 +396,22 @@ class LicensePlateDetector:
         cv2.waitKey(1)
 
     def process_plate(self, frame, detection_confidence=85):
+        """
+        Process a single frame to detect and recognize license plates using OpenALPR.
+
+        This function analyzes the given frame for license plates, filters out invalid plates,
+        and checks the confidence of the detection. If a valid plate is detected with sufficient
+        confidence, it is added to the plate history for further processing.
+
+        Parameters:
+        frame (numpy.ndarray): The input image frame to be processed for license plate detection.
+        detection_confidence (int, optional): The minimum confidence threshold for a license plate
+                                              detection to be considered valid. Defaults to 85.
+
+        Returns:
+        None: This function doesn't return anything, but it may update the internal state of the
+              object by calling other methods like check_plate_shallow_history.
+        """
         results_alpr = self.alpr.recognize_ndarray(frame)
         if not results_alpr['results']:
             return
@@ -376,11 +422,25 @@ class LicensePlateDetector:
 
             if self.is_invalid_plate(plate):
                 continue
-            
+
             if confidence > detection_confidence:
                 self.check_plate_shallow_history(plate)
 
     def is_invalid_plate(self, plate):
+        """
+        Check if a license plate is invalid based on various criteria.
+
+        This function applies several checks to determine if a given license plate
+        is invalid. It checks for plates with all identical characters, specific
+        known invalid patterns, length constraints, all-digit or all-letter plates,
+        and repetitive patterns.
+
+        Parameters:
+        plate (str): The license plate string to be validated.
+
+        Returns:
+        bool: True if the plate is considered invalid, False otherwise.
+        """
         if len(set(plate)) == 1:
             return True
         if plate in ["IIIIIIII", "IIIIIII", "IIIIII", "OOOO", "OOOOO", "IIIIII1", "JIIIIIII"]:
@@ -396,10 +456,26 @@ class LicensePlateDetector:
         return False
 
     def check_plate_shallow_history(self, plate, history_size=8):
+        """
+        Check and update the shallow history of detected license plates.
+
+        This function maintains a short-term history of detected license plates,
+        identifies the most frequent plate in this history, and triggers a deep
+        history check if certain conditions are met.
+
+        Parameters:
+        plate (str): The newly detected license plate to be added to the history.
+        history_size (int, optional): The maximum size of the plate history to maintain.
+                                      Defaults to 8.
+
+        Returns:
+        None: This function doesn't return a value, but it may trigger the
+              check_plate_deep_history method and clear the plate history.
+        """
         self.plate_history.append(plate)
         if len(self.plate_history) > history_size:
             self.plate_history.pop(0)
-        
+
         if len(self.plate_history) == history_size:
             plate_counts = Counter(self.plate_history)
             most_frequent_plate, count = plate_counts.most_common(1)[0]
@@ -409,6 +485,21 @@ class LicensePlateDetector:
                     self.plate_history.clear()
 
     def check_plate_deep_history(self, shallow_history_plate):
+        """
+        Check and process a license plate for deep history storage and publication.
+
+        This function checks if a license plate from the shallow history should be
+        added to the deep history. If so, it encrypts the plate, creates metadata,
+        and publishes the license plate data.
+
+        Parameters:
+        shallow_history_plate (str): The license plate number from the shallow history
+                                     to be checked and potentially stored in deep history.
+
+        Returns:
+        None: This function doesn't return a value, but it may add the plate to deep history,
+              encrypt it, create metadata, and publish the data if conditions are met.
+        """
         if self.adjusted_gnss_data is None:
             print("GNSS data is not available. Skipping storage.")
             return
@@ -423,6 +514,22 @@ class LicensePlateDetector:
             self.publish_license_plate_data(metadata)
 
     def publish_license_plate_data(self, metadata):
+        """
+        Publish license plate data to a ROS topic.
+
+        This function takes metadata about a detected license plate and publishes it
+        as a comma-separated string to a predefined ROS topic.
+
+        Parameters:
+        metadata (Metadata): An object containing the following attributes:
+            - automobile_id (int): Unique identifier for the automobile.
+            - date_time (str): Timestamp of the detection.
+            - number_plate (str): Encrypted license plate number.
+            - gnss_data (dict): Dictionary containing 'latitude', 'longitude', and 'altitude'.
+
+        Returns:
+        None: This function doesn't return a value, but publishes the data to a ROS topic.
+        """
         data_string = f"{metadata.automobile_id},{metadata.date_time},{metadata.number_plate},{metadata.gnss_data['latitude']},{metadata.gnss_data['longitude']},{metadata.gnss_data['altitude']}"
         self.license_plate_pub.publish(data_string)
         #print(f"{self.topic_name} Published license plate data: {data_string}")
