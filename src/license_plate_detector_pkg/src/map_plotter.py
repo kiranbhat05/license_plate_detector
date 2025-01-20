@@ -39,6 +39,17 @@ class DecryptionManager:
 
 class MapPlotter:
     def __init__(self):
+        """
+        Initializes the MapPlotter object.
+
+        This function sets up the initial state of the MapPlotter object, including:
+        - Initializing the map center and zoom level for Plotly.
+        - Setting up an empty dictionary to store number plates and their respective coordinates and altitude.
+        - Setting up the Plotly mapbox figure with the initial layout.
+        - Loading the private key for decryption.
+        - Subscribing to the license_plate_data topic.
+        - Registering the shutdown hook to save the map when the ROS node is shutting down.
+        """
         # Initialize the map center and zoom level for Plotly
         self.map_center = [51.5065289834961, 7.4567108137787255]
         self.zoom_level = 15
@@ -73,7 +84,22 @@ class MapPlotter:
         rospy.on_shutdown(self.save_map_on_shutdown)
 
     def license_plate_callback(self, msg):
-        """Callback function to handle incoming license plate data."""
+        """
+        Callback function to handle incoming license plate data.
+
+        Parameters:
+        msg (std_msgs.msg.String): The ROS message containing the license plate data.
+
+        The function does the following:
+        1. Splits the data in the message by comma.
+        2. Decrypts the number plate data using a private RSA key.
+        3. Processes the remaining GNSS and other data.
+        4. Stores the data in a dictionary with the decrypted number plate as the key.
+        5. Prints a summary of the received data point.
+
+        Returns:
+        None
+        """
         data = msg.data.split(',')
 
         # Decrypt the number plate data (third element, index 2)
@@ -102,7 +128,19 @@ class MapPlotter:
         print(f"Received data point: {number_plate} at ({latitude}, {longitude}), Altitude: {altitude}")
 
     def update_map_plot(self):
-        """Update the Plotly map with all collected data points at once."""
+        """
+        Update the Plotly map with all collected data points at once.
+
+        This function extracts latitudes, longitudes, and plate information from the stored data,
+        clears any previous traces on the map, and adds all the stored data points to the Plotly map.
+        Each data point is represented as a marker on the map, with its information displayed when hovered over.
+
+        Parameters:
+            None
+
+        Returns:
+            None
+        """
         # Extract latitudes, longitudes, and plate info from the stored data
         latitudes = [data['latitude'] for data in self.plate_data.values()]
         longitudes = [data['longitude'] for data in self.plate_data.values()]
@@ -121,11 +159,37 @@ class MapPlotter:
         ))
 
     def save_map_on_shutdown(self):
-        """Save the map when ROS node is shutting down."""
+        """
+        Save the map data to a file when the ROS node is shutting down.
+
+        This method is called as a shutdown hook to ensure that the map data is saved
+        to a file before the ROS node is terminated. It internally calls the `save_map`
+        method to perform the actual saving operation.
+
+        Parameters:
+            None
+
+        Returns:
+            None
+        """
         self.save_map()
 
     def save_map(self, file_name="license_plate_map.html"):
-        """Save the map data to a file."""
+        """
+        Save the map data to a file.
+
+        This function updates the map with all collected data points and then
+        saves the map data to a file in HTML format. The file name can be
+        specified as an argument, with a default value of "license_plate_map.html".
+
+        Parameters:
+            file_name (str): The name of the file to save the map data to.
+                Defaults to "license_plate_map.html".
+
+        Returns:
+            None: This function does not return a value. Instead, it saves the map data
+                to a file and prints a message indicating the file name and location.
+        """
         # Update the map with all collected points
         self.update_map_plot()
 
